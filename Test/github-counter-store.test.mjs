@@ -43,6 +43,7 @@ test("creates a new per-domain file without a sha", async () => {
     jsonResponse(200, { name: "main" }),
     (url, options) => {
       assert.equal(options.method, "PUT");
+      assert.ok(options.signal instanceof AbortSignal);
       const body = JSON.parse(options.body);
       assert.equal(body.branch, "main");
       assert.equal(Object.hasOwn(body, "sha"), false);
@@ -51,6 +52,8 @@ test("creates a new per-domain file without a sha", async () => {
       assert.equal(stored.domain, "example.com");
       assert.equal(stored.total, 1);
       assert.equal(stored.projects.blog.total, 1);
+      assert.equal(stored.ips["h:test"].count, 1);
+      assert.equal(stored.projects.blog.ips["h:test"].count, 1);
       return jsonResponse(201, { content: { sha: "created" } });
     },
   ]);
@@ -60,6 +63,7 @@ test("creates a new per-domain file without a sha", async () => {
     domain: "example.com",
     project: "blog",
     now: 123,
+    visitorKey: "h:test",
   });
 
   assert.equal(result.total, 1);
@@ -140,6 +144,38 @@ test("does not retry authentication failures", async () => {
     (error) => error instanceof GitHubStorageError && error.code === "github_write_failed"
   );
   assert.equal(queue.calls.length, 2);
+});
+
+test("aborts a stalled GitHub request at the configured timeout", async () => {
+  const fetchImpl = async (url, options = {}) =>
+    new Promise((resolve, reject) => {
+      options.signal.addEventListener("abort", () => reject(new Error("aborted")), {
+        once: true,
+      });
+    });
+
+  await assert.rejects(
+    createStore(fetchImpl, { requestTimeoutMs: 5 }).readDomain("example.com"),
+    (error) => error instanceof GitHubStorageError && error.code === "github_unreachable"
+  );
+});
+
+test("keeps the timeout active while consuming the GitHub response body", async () => {
+  const fetchImpl = async (url, options = {}) => ({
+    ok: true,
+    status: 200,
+    text: async () =>
+      new Promise((resolve, reject) => {
+        options.signal.addEventListener("abort", () => reject(new Error("body aborted")), {
+          once: true,
+        });
+      }),
+  });
+
+  await assert.rejects(
+    createStore(fetchImpl, { requestTimeoutMs: 5 }).readDomain("example.com"),
+    (error) => error instanceof GitHubStorageError && error.code === "github_unreachable"
+  );
 });
 
 test("returns zero data for a missing file and rejects corrupt JSON", async () => {

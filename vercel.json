@@ -1,8 +1,27 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    {
+      "source": "/public/counter.js",
+      "destination": "/counter.js"
+    }
+  ],
   "headers": [
     {
       "source": "/counter.js",
+      "headers": [
+        {
+          "key": "Access-Control-Allow-Origin",
+          "value": "*"
+        },
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=3600"
+        }
+      ]
+    },
+    {
+      "source": "/public/counter.js",
       "headers": [
         {
           "key": "Access-Control-Allow-Origin",

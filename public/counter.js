@@ -77,7 +77,7 @@
           nextTotal === currentTotal
           && Number.isFinite(currentLast)
           && Number.isFinite(nextLast)
-          && nextLast < currentLast
+          && nextLast <= currentLast
         )
       )
     ) {
@@ -98,11 +98,10 @@
     return qs.toString();
   };
 
-  const hit = async () => {
+  const requestHit = async () => {
     const hitUrl = `${serverOrigin}/hit?${buildQuery()}&debug=1`;
     if (typeof fetch !== "function") {
-      if (navigator.sendBeacon) return navigator.sendBeacon(hitUrl);
-      throw new Error("hit_transport_unavailable");
+      throw new Error("hit_async_requires_fetch");
     }
 
     const response = await fetch(hitUrl, {
@@ -121,7 +120,37 @@
     }
     if (!json || !json.ok) throw new Error("hit_failed");
 
-    return applyData(json);
+    return json;
+  };
+
+  // Legacy contract: fire-and-forget, return undefined, and never leak an
+  // unhandled rejection to pages that call BFTCounter.hit() without awaiting.
+  const hit = () => {
+    const hitUrl = `${serverOrigin}/hit?${buildQuery()}`;
+    try {
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(hitUrl);
+      } else if (typeof fetch === "function") {
+        fetch(hitUrl, { cache: "no-store" }).catch(() => {});
+      }
+    } catch {}
+  };
+
+  // Additive API for callers that need the committed GitHub result.
+  const hitAsync = async () => {
+    const json = await requestHit();
+    return json ? applyData(json) : null;
+  };
+
+  const statsPayloadFromHit = (json) => {
+    const payload = {
+      ok: true,
+      domain: json.domain,
+      total: json.total,
+      last: json.last,
+    };
+    if (json.project) payload.project = json.project;
+    return payload;
   };
 
   const get = async () => {
@@ -147,7 +176,7 @@
       throw new Error(json && json.msg ? String(json.msg) : "stats_failed");
     }
 
-    if (requestId < state.appliedRequestId) return json;
+    if (requestId < state.appliedRequestId) return state.data || json;
     state.appliedRequestId = requestId;
     return applyData(json);
   };
@@ -166,6 +195,7 @@
     project: state.project, // ✅ 新增：方便外部显示/调试
     serverOrigin: state.serverOrigin,
     hit,
+    hitAsync,
     get,
     on,
     peek: () => state.data,
@@ -180,12 +210,23 @@
       get().catch(() => {}).finally(() => {
         inflight = false;
       });
-      }, pollMs);
+    }, pollMs);
   };
 
-  // GitHub 写入需要先 GET 再 PUT；初次写入和读取结束后再启动轮询。
-  hit()
-    .then((data) => data || get().catch(() => {}))
-    .catch(() => get().catch(() => {}))
-    .finally(startPolling);
+  // Preserve the original immediate read/poll behavior, then refresh once the
+  // GitHub commit finishes so the eventually displayed value is authoritative.
+  let initialHit;
+  if (typeof fetch === "function") {
+    initialHit = requestHit();
+  } else {
+    hit();
+    initialHit = Promise.resolve(null);
+  }
+  get().catch(() => {});
+  initialHit
+    .then((json) => {
+      if (json) applyData(statsPayloadFromHit(json));
+    })
+    .catch(() => {});
+  startPolling();
 })();

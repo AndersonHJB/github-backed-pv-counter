@@ -1,6 +1,6 @@
 {
   "allowAll": false,
-  "allowGetHits": false,
+  "allowGetHits": true,
   "allowedDomains": [
     "bornforthis.cn",
     "ai.bornforthis.cn",
@@ -9,9 +9,11 @@
     "gemini.google.com"
   ],
   "allowedRootDomains": [],
+  "ipMode": "hash",
   "rateLimitMax": 5,
   "rateLimitWindowMs": 60000,
   "statsRateLimitMax": 60,
-  "statsCacheTtlMs": 10000,
-  "maxProjectsPerDomain": 100
+  "statsCacheTtlMs": 0,
+  "maxProjectsPerDomain": 100,
+  "maxVisitorKeysPerDomain": 2000
 }

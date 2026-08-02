@@ -136,14 +136,14 @@ function safeProjectKey(s) {
   // ---------- 1) hit without project: debug=1 returns JSON, normal returns 204 ----------
   {
     const hitDebugUrl = urlWith(base, "/hit", { d: testDomain, debug: 1 });
-    const { json } = await fetchJson(hitDebugUrl, { expectOk: true, method: "POST" });
+    const { json } = await fetchJson(hitDebugUrl, { expectOk: true });
     assert(json.domain === testDomain, "hit debug domain mismatch");
     console.log("✅ [1] /hit?d=..&debug=1 returns JSON OK");
   }
 
   {
     const hit204Url = urlWith(base, "/hit", { d: testDomain });
-    const r = await fetchNoBody(hit204Url, { expectStatus: 204, method: "POST" });
+    const r = await fetchNoBody(hit204Url, { expectStatus: 204 });
     assert(r.status === 204, "hit should be 204");
     console.log("✅ [1b] /hit?d=.. returns 204 OK");
   }
@@ -151,7 +151,7 @@ function safeProjectKey(s) {
   // ---------- 2) hit with project: debug + 204 ----------
   {
     const hitProjDebugUrl = urlWith(base, "/hit", { d: testDomain, p: testProject, debug: 1 });
-    const { json } = await fetchJson(hitProjDebugUrl, { expectOk: true, method: "POST" });
+    const { json } = await fetchJson(hitProjDebugUrl, { expectOk: true });
     assert(json.domain === testDomain, "hit debug domain mismatch (project)");
     assert(json.project === testProject, "hit debug project mismatch");
     console.log("✅ [2] /hit?d=..&p=..&debug=1 returns JSON OK");
@@ -159,7 +159,7 @@ function safeProjectKey(s) {
 
   {
     const hitProj204Url = urlWith(base, "/hit", { d: testDomain, p: testProject });
-    const r = await fetchNoBody(hitProj204Url, { expectStatus: 204, method: "POST" });
+    const r = await fetchNoBody(hitProj204Url, { expectStatus: 204 });
     assert(r.status === 204, "hit(project) should be 204");
     console.log("✅ [2b] /hit?d=..&p=.. returns 204 OK");
   }
@@ -232,7 +232,6 @@ function safeProjectKey(s) {
     const { r, text } = await fetchJson(badProjHitUrl, {
       expectOk: false,
       expectStatus: 400,
-      method: "POST",
     });
     assert(r.status === 400, "invalid project hit should be 400");
     assert(text.includes("invalid_project"), "invalid project hit msg should contain invalid_project");

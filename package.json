@@ -1,9 +1,10 @@
 {
   "name": "github-backed-pv-counter",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Low-traffic page-view counter backed by a public GitHub repository and deployable on Vercel.",
   "main": "server.js",
   "scripts": {
+    "migrate:legacy": "node scripts/migrate-legacy-data.mjs",
     "test": "node --test Test/*.test.mjs",
     "test:regression": "node Test/test-counter.mjs",
     "start": "node server.js"

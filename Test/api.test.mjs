@@ -1,17 +1,21 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 import serverModule from "../server.js";
 import memoryStoreModule from "../lib/memory-counter-store.js";
 
-const { createApp } = serverModule;
+const { createApp, normalizeConfig, visitorKeyForRequest } = serverModule;
 const { MemoryCounterStore } = memoryStoreModule;
+const TEST_IP_SECRET = "0123456789abcdef0123456789abcdef";
 
 const openConfig = {
   allowAll: true,
-  allowGetHits: false,
+  allowGetHits: true,
   allowedDomains: [],
   allowedRootDomains: [],
   rateLimitMax: 100,
+  statsRateLimitMax: 0,
+  statsCacheTtlMs: 0,
 };
 
 async function withServer(app, callback) {
@@ -43,12 +47,12 @@ test("keeps the domain and project counter API compatible", async () => {
     assert.equal(initial.response.status, 200);
     assert.equal(initial.body.total, 0);
 
-    const debug = await json(`${base}/hit?d=example.com&debug=1`, { method: "POST" });
+    const debug = await json(`${base}/hit?d=example.com&debug=1`);
     assert.equal(debug.body.ok, true);
     assert.equal(debug.body.ts, 12345);
     assert.equal(debug.body.total, 1);
 
-    const normalDomain = await fetch(`${base}/hit?d=example.com`, { method: "POST" });
+    const normalDomain = await fetch(`${base}/hit?d=example.com`);
     assert.equal(normalDomain.status, 204);
     const debugProject = await json(`${base}/hit?d=example.com&p=blog&debug=1`, {
       method: "POST",
@@ -60,7 +64,7 @@ test("keeps the domain and project counter API compatible", async () => {
     const domain = await json(`${base}/stats?d=example.com&includeProjects=1`);
     assert.equal(domain.body.total, 4);
     assert.equal(domain.body.projects.blog.total, 2);
-    assert.match(domain.response.headers.get("cache-control"), /s-maxage=10/);
+    assert.equal(domain.response.headers.get("cache-control"), "no-store");
 
     const project = await json(`${base}/stats?d=example.com&p=blog`);
     assert.equal(project.body.total, 2);
@@ -164,16 +168,215 @@ test("serves counter.js with CORS and cache headers", async () => {
     assert.match(response.headers.get("content-type"), /javascript/);
     assert.equal(response.headers.get("access-control-allow-origin"), "*");
     assert.match(await response.text(), /window\.BFTCounter/);
+
+    const legacyPath = await fetch(`${base}/public/counter.js`);
+    assert.equal(legacyPath.status, 200);
+    assert.match(legacyPath.headers.get("content-type"), /javascript/);
+
+    const options = await fetch(`${base}/hit`, { method: "OPTIONS" });
+    assert.equal(options.status, 204);
+    assert.equal(options.headers.get("access-control-allow-origin"), "*");
+    assert.match(options.headers.get("access-control-allow-methods"), /GET,POST,OPTIONS/);
   });
 });
 
-test("rejects legacy GET writes by default", async () => {
-  const app = createApp({ store: new MemoryCounterStore(), configProvider: () => openConfig });
+test("can explicitly disable legacy GET writes", async () => {
+  const app = createApp({
+    store: new MemoryCounterStore(),
+    configProvider: () => ({ ...openConfig, allowGetHits: false }),
+  });
   await withServer(app, async (base) => {
     const response = await json(`${base}/hit?d=example.com`);
     assert.equal(response.response.status, 405);
     assert.equal(response.response.headers.get("allow"), "POST");
     assert.equal(response.body.error, "method_not_allowed");
+  });
+});
+
+test("maps the legacy anonymizeIp config and keeps GET hits enabled by default", () => {
+  assert.equal(normalizeConfig({ anonymizeIp: true }).ipMode, "anonymized");
+  assert.equal(normalizeConfig({ anonymizeIp: false }).ipMode, "none");
+  assert.equal(normalizeConfig({}).allowGetHits, true);
+
+  const request = {
+    headers: { "x-forwarded-for": "203.0.113.7, 10.0.0.1" },
+    socket: { remoteAddress: "127.0.0.1" },
+  };
+  assert.equal(visitorKeyForRequest(request, { ipMode: "none" }, "example.com"), "");
+  assert.equal(
+    visitorKeyForRequest(
+      request,
+      { ipMode: "raw", allowRawIps: true },
+      "example.com"
+    ),
+    "203.0.113.7"
+  );
+  assert.equal(visitorKeyForRequest(request, { ipMode: "raw" }, "example.com"), "");
+  assert.equal(
+    visitorKeyForRequest(request, { ipMode: "anonymized" }, "example.com"),
+    "203.0.113.0/24"
+  );
+  assert.equal(
+    visitorKeyForRequest(
+      { headers: { "x-forwarded-for": "2001:db8::1" }, socket: {} },
+      { ipMode: "anonymized" },
+      "example.com"
+    ),
+    "2001:db8:0:0::/64"
+  );
+  const hashed = visitorKeyForRequest(request, {
+    ipMode: "hash",
+    ipHashSecret: TEST_IP_SECRET,
+  }, "example.com");
+  assert.match(hashed, /^h:/);
+  assert.equal(hashed.includes("203.0.113.7"), false);
+  assert.notEqual(
+    hashed,
+    visitorKeyForRequest(
+      request,
+      { ipMode: "hash", ipHashSecret: TEST_IP_SECRET },
+      "other.example.com"
+    )
+  );
+  assert.equal(
+    visitorKeyForRequest(
+      request,
+      { ipMode: "hash", ipHashSecret: "too-short" },
+      "example.com"
+    ),
+    ""
+  );
+
+  const shipped = normalizeConfig(
+    JSON.parse(fs.readFileSync(new URL("../config.json", import.meta.url), "utf8"))
+  );
+  assert.equal(shipped.allowAll, false);
+  assert.equal(shipped.allowGetHits, true);
+  assert.equal(shipped.ipMode, "hash");
+  assert.equal(shipped.statsCacheTtlMs, 0);
+});
+
+test("can explicitly re-enable stats caching", async () => {
+  const app = createApp({
+    store: new MemoryCounterStore(),
+    configProvider: () => ({ ...openConfig, statsCacheTtlMs: 10_000 }),
+  });
+  await withServer(app, async (base) => {
+    const response = await fetch(`${base}/stats?d=example.com`);
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("cache-control"), /s-maxage=10/);
+  });
+});
+
+test("records privacy-safe visitor IDs for domain and project IP stats", async () => {
+  const store = new MemoryCounterStore();
+  const app = createApp({
+    store,
+    configProvider: () => ({
+      ...openConfig,
+      ipMode: "hash",
+      ipHashSecret: TEST_IP_SECRET,
+    }),
+    now: () => 12345,
+  });
+
+  await withServer(app, async (base) => {
+    const headers = { "x-forwarded-for": "203.0.113.7, 10.0.0.1" };
+    assert.equal(
+      (await fetch(`${base}/hit?d=example.com&p=blog`, { method: "POST", headers })).status,
+      204
+    );
+    assert.equal(
+      (await fetch(`${base}/hit?d=example.com`, { method: "POST", headers })).status,
+      204
+    );
+
+    const domain = await json(`${base}/stats?d=example.com&includeIps=1`);
+    const domainKeys = Object.keys(domain.body.ips);
+    assert.equal(domainKeys.length, 1);
+    assert.match(domainKeys[0], /^h:/);
+    assert.equal(domainKeys[0].includes("203.0.113.7"), false);
+    assert.deepEqual(domain.body.ips[domainKeys[0]], {
+      count: 2,
+      first: 12345,
+      last: 12345,
+    });
+
+    const project = await json(`${base}/stats?d=example.com&p=blog&includeIps=1`);
+    assert.deepEqual(project.body.ips[domainKeys[0]], {
+      count: 1,
+      first: 12345,
+      last: 12345,
+    });
+  });
+});
+
+test("requires explicit opt-in and authentication for raw IP stats", async () => {
+  const app = createApp({
+    store: new MemoryCounterStore(),
+    configProvider: () => ({
+      ...openConfig,
+      ipMode: "raw",
+      allowRawIps: true,
+      ipStatsToken: TEST_IP_SECRET,
+      statsCacheTtlMs: 10_000,
+    }),
+    now: () => 12345,
+  });
+
+  await withServer(app, async (base) => {
+    const headers = { "x-forwarded-for": "203.0.113.7" };
+    assert.equal(
+      (await fetch(`${base}/hit?d=example.com`, { method: "POST", headers })).status,
+      204
+    );
+
+    const forbidden = await json(`${base}/stats?d=example.com&includeIps=1`);
+    assert.equal(forbidden.response.status, 403);
+    assert.equal(forbidden.body.error, "ip_stats_forbidden");
+
+    const authorized = await json(`${base}/stats?d=example.com&includeIps=1`, {
+      headers: { authorization: `Bearer ${TEST_IP_SECRET}` },
+    });
+    assert.equal(authorized.response.status, 200);
+    assert.equal(authorized.body.ips["203.0.113.7"].count, 1);
+    assert.equal(authorized.response.headers.get("cache-control"), "private, no-store");
+  });
+});
+
+test("keeps historical raw IP maps protected after switching modes", async () => {
+  const store = new MemoryCounterStore({
+    "example.com": {
+      total: 1,
+      last: 12345,
+      ips: {
+        "203.0.113.7": { count: 1, first: 12345, last: 12345 },
+      },
+      projects: {},
+    },
+  });
+  const app = createApp({
+    store,
+    configProvider: () => ({
+      ...openConfig,
+      ipMode: "hash",
+      ipHashSecret: TEST_IP_SECRET,
+      ipStatsToken: TEST_IP_SECRET,
+      statsCacheTtlMs: 10_000,
+    }),
+  });
+
+  await withServer(app, async (base) => {
+    const forbidden = await json(`${base}/stats?d=example.com&includeIps=1`);
+    assert.equal(forbidden.response.status, 403);
+    assert.equal(forbidden.body.error, "ip_stats_forbidden");
+
+    const authorized = await json(`${base}/stats?d=example.com&includeIps=1`, {
+      headers: { "x-counter-stats-token": TEST_IP_SECRET },
+    });
+    assert.equal(authorized.response.status, 200);
+    assert.equal(authorized.body.ips["203.0.113.7"].count, 1);
+    assert.equal(authorized.response.headers.get("cache-control"), "private, no-store");
   });
 });
 

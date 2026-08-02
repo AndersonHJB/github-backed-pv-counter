@@ -125,7 +125,7 @@
     vUv.textContent = uv;
   }
 
-  // Hit +1（默认只接受 POST，避免爬虫通过 GET 触发写入）
+  // Hit +1（GET/POST 都兼容；这里继续使用 POST）
   $('btnHit').onclick = async () => {
     const d = encodeURIComponent(domainEl.value.trim());
     try {
