@@ -1,0 +1,17 @@
+{
+  "allowAll": false,
+  "allowGetHits": false,
+  "allowedDomains": [
+    "bornforthis.cn",
+    "ai.bornforthis.cn",
+    "counter.bornforthis.cn",
+    "aistudio.google.com",
+    "gemini.google.com"
+  ],
+  "allowedRootDomains": [],
+  "rateLimitMax": 5,
+  "rateLimitWindowMs": 60000,
+  "statsRateLimitMax": 60,
+  "statsCacheTtlMs": 10000,
+  "maxProjectsPerDomain": 100
+}

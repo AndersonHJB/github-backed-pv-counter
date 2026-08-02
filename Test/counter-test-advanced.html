@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>Counter 高级测试（白名单/统计）</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <style>
+    body { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto; background:#0b1220; color:#e5e7eb; padding:24px; }
+    .wrap { max-width: 900px; margin: 0 auto; display:grid; gap:16px; }
+    .card { background:#050b17; border:1px solid #1f2a44; border-radius:14px; padding:18px; }
+    h1 { margin:0 0 10px; font-size:20px; }
+    .row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+    label { font-size:13px; color:#93a4c7; }
+    input, select { background:#071027; color:#e5e7eb; border:1px solid #24314f; border-radius:10px; padding:10px 12px; outline:none; }
+    input { min-width: 280px; }
+    button { background:#38bdf8; border:none; border-radius:10px; padding:10px 12px; cursor:pointer; color:#04101d; font-weight:600; }
+    button:hover { filter: brightness(1.05); }
+    .k { color:#93a4c7; }
+    .v { color:#38bdf8; font-weight:700; }
+    pre { background:#040a14; border:1px solid #1f2a44; border-radius:12px; padding:12px; overflow:auto; min-height: 120px; }
+    .ok { color:#4ade80; }
+    .err { color:#fb7185; }
+    .small { font-size:12px; color:#93a4c7; }
+    .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+    @media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+  </style>
+</head>
+
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>🧪 Counter 高级测试（白名单 / 兼容字段）</h1>
+
+    <div class="row" style="margin-top:10px;">
+      <label>统计服务：</label>
+      <input id="origin" value="https://counter.bornforthis.cn" />
+      <label>domain：</label>
+      <input id="domain" />
+      <button id="btnHit">Hit +1</button>
+      <button id="btnStats">Get Stats</button>
+      <button id="btnStatsIps">Get Stats (includeIps 兼容测试)</button>
+    </div>
+
+    <div class="small" style="margin-top:10px;">
+      提示：本文件默认把 domain 填成当前页面 <b>location.hostname</b>。
+      如果你是直接本地打开（file://），hostname 可能为空，此时请手动填你要统计的域名（如 <b>ai.bornforthis.cn</b>）。
+      若开启了白名单（allowAll=false），domain 必须出现在 allowedDomains，或落在显式配置的 allowedRootDomains 范围内，否则会 403。
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h1>📌 快速结果</h1>
+      <div class="row"><span class="k">domain：</span><span class="v" id="vDomain">-</span></div>
+      <div class="row"><span class="k">total：</span><span class="v" id="vTotal">-</span></div>
+      <div class="row"><span class="k">last：</span><span class="v" id="vLast">-</span></div>
+      <div class="row"><span class="k">兼容字段 ips 数量（应为 0）：</span><span class="v" id="vUv">-</span></div>
+      <div class="row"><span class="k">状态：</span><span id="vStatus" class="small">-</span></div>
+    </div>
+
+    <div class="card">
+      <h1>🧾 原始响应 JSON</h1>
+      <pre id="raw">等待请求...</pre>
+    </div>
+  </div>
+
+  <div class="card">
+    <h1>✅ 自动化测试（加载 counter.js / 检查 BFTCounter）</h1>
+    <div class="row">
+      <button id="btnLoadJs">动态加载 counter.js</button>
+      <button id="btnUseApi">调用 window.BFTCounter.get()</button>
+      <button id="btnListen">监听 bftcounter:update</button>
+    </div>
+    <pre id="log">日志输出...</pre>
+  </div>
+
+  <!-- 你也可以直接在这里静态引入（可选） -->
+  <!-- <script src="https://counter.bornforthis.cn/counter.js"></script> -->
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+
+  const originEl = $('origin');
+  const domainEl = $('domain');
+  const rawEl = $('raw');
+
+  const vDomain = $('vDomain');
+  const vTotal = $('vTotal');
+  const vLast = $('vLast');
+  const vUv = $('vUv');
+  const vStatus = $('vStatus');
+
+  const logEl = $('log');
+
+  function log(line, type="") {
+    const prefix = type === "ok" ? "✅ " : type === "err" ? "❌ " : "• ";
+    logEl.textContent += `\n${prefix}${line}`;
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function setStatus(text, ok=true) {
+    vStatus.innerHTML = ok ? `<span class="ok">${text}</span>` : `<span class="err">${text}</span>`;
+  }
+
+  // 默认填入 domain（注意 file:// 时 hostname 可能为空）
+  domainEl.value = location.hostname || "ai.bornforthis.cn";
+
+  async function request(path) {
+    const origin = originEl.value.replace(/\/+$/, "");
+    const url = origin + path;
+    const r = await fetch(url, { cache: "no-store" });
+    // /hit 返回 204 没 body
+    if (r.status === 204) return { _status: 204 };
+    const json = await r.json().catch(() => ({}));
+    json._status = r.status;
+    return json;
+  }
+
+  function renderStats(data) {
+    vDomain.textContent = data.domain ?? "-";
+    vTotal.textContent = data.total ?? "-";
+    vLast.textContent = data.last ? new Date(data.last).toLocaleString() : (data.last ?? "-");
+    const uv = data.ips ? Object.keys(data.ips).length : "-";
+    vUv.textContent = uv;
+  }
+
+  // Hit +1（默认只接受 POST，避免爬虫通过 GET 触发写入）
+  $('btnHit').onclick = async () => {
+    const d = encodeURIComponent(domainEl.value.trim());
+    try {
+      const origin = originEl.value.replace(/\/+$/, "");
+      const url = `${origin}/hit?d=${d}`;
+      const r = await fetch(url, { method: "POST", cache: "no-store" });
+      if (r.status === 204) {
+        setStatus("Hit 成功（204）", true);
+        rawEl.textContent = `HTTP ${r.status} (No Content)\n已写入计数，接下来点 Get Stats 查看结果。`;
+      } else {
+        const t = await r.text();
+        setStatus(`Hit 异常（${r.status}）`, false);
+        rawEl.textContent = t;
+      }
+    } catch (e) {
+      setStatus("Hit 请求失败（网络/CORS/域名）", false);
+      rawEl.textContent = String(e);
+    }
+  };
+
+  // Get Stats
+  $('btnStats').onclick = async () => {
+    const d = encodeURIComponent(domainEl.value.trim());
+    try {
+      const data = await request(`/stats?d=${d}`);
+      rawEl.textContent = JSON.stringify(data, null, 2);
+      if (data.ok) {
+        setStatus(`Stats OK（HTTP ${data._status}）`, true);
+        renderStats(data);
+      } else {
+        setStatus(`Stats 失败（HTTP ${data._status}）: ${data.error || "unknown"}`, false);
+      }
+    } catch (e) {
+      setStatus("Stats 请求失败（网络/CORS/域名）", false);
+      rawEl.textContent = String(e);
+    }
+  };
+
+  // Get Stats includeIps=1
+  $('btnStatsIps').onclick = async () => {
+    const d = encodeURIComponent(domainEl.value.trim());
+    try {
+      const data = await request(`/stats?d=${d}&includeIps=1`);
+      rawEl.textContent = JSON.stringify(data, null, 2);
+      if (data.ok) {
+        setStatus(`Stats(includeIps) OK（HTTP ${data._status}）`, true);
+        renderStats(data);
+      } else {
+        setStatus(`Stats(includeIps) 失败（HTTP ${data._status}）: ${data.error || "unknown"}`, false);
+      }
+    } catch (e) {
+      setStatus("Stats(includeIps) 请求失败", false);
+      rawEl.textContent = String(e);
+    }
+  };
+
+  // 动态加载 counter.js
+  $('btnLoadJs').onclick = () => {
+    const origin = originEl.value.replace(/\/+$/, "");
+    const s = document.createElement('script');
+    s.src = origin + "/counter.js";
+    s.onload = () => log("counter.js 加载成功", "ok");
+    s.onerror = () => log("counter.js 加载失败（检查 Nginx/路径/SSL）", "err");
+    document.head.appendChild(s);
+    log("开始加载 counter.js ...");
+  };
+
+  // 调用 window.BFTCounter.get()
+  $('btnUseApi').onclick = async () => {
+    if (!window.BFTCounter) {
+      log("window.BFTCounter 不存在：请先加载 counter.js", "err");
+      return;
+    }
+    // 强制让 counter.js 使用你输入的 domain（可选）
+    // 如果你希望 counter.js 自己用 location.hostname，就不要管这里
+    try {
+      const data = await window.BFTCounter.get();
+      log(`BFTCounter.get() => total=${data.total}`, "ok");
+      rawEl.textContent = JSON.stringify(data, null, 2);
+      renderStats(data);
+    } catch (e) {
+      log("BFTCounter.get() 调用失败：" + String(e), "err");
+    }
+  };
+
+  // 监听 bftcounter:update
+  let listening = false;
+  $('btnListen').onclick = () => {
+    if (listening) { log("已在监听中"); return; }
+    listening = true;
+    window.addEventListener("bftcounter:update", (e) => {
+      log("收到事件 bftcounter:update => " + JSON.stringify(e.detail), "ok");
+    });
+    log("已开始监听 bftcounter:update", "ok");
+  };
+</script>
+</body>
+</html>

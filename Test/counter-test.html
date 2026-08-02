@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>BFT Counter Test</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont;
+      padding: 24px;
+      background: #0f172a;
+      color: #e5e7eb;
+    }
+    h1 {
+      font-size: 22px;
+      margin-bottom: 12px;
+    }
+    .card {
+      background: #020617;
+      border: 1px solid #1e293b;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .label {
+      color: #94a3b8;
+      font-size: 14px;
+    }
+    .value {
+      font-size: 28px;
+      font-weight: 700;
+      margin-top: 4px;
+    }
+    button {
+      margin-top: 12px;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: none;
+      background: #38bdf8;
+      color: #020617;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:hover {
+      opacity: 0.9;
+    }
+    pre {
+      background: #020617;
+      border: 1px solid #1e293b;
+      padding: 12px;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 12px;
+      color: #a5b4fc;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>📊 BFT Counter 测试页面</h1>
+
+  <!-- 主域统计 -->
+  <div class="card">
+    <div class="label">主域 ai.bornforthis.cn 访问量</div>
+    <div class="value" id="domainCount">-</div>
+  </div>
+
+  <!-- 项目统计 -->
+  <div class="card">
+    <div class="label">项目 ReadyGoDuel 访问量</div>
+    <div class="value" id="projectCount">-</div>
+  </div>
+
+  <!-- 控制 -->
+  <div class="card">
+    <button id="manualHit">手动触发一次 hit()</button>
+  </div>
+
+  <!-- 调试输出 -->
+  <div class="card">
+    <div class="label">调试信息（window.BFTCounter.peek()）</div>
+    <pre id="debug">waiting...</pre>
+  </div>
+
+  <!-- ========== 统计脚本 ========== -->
+  <script
+    src="https://counter.bornforthis.cn/counter.js"
+    data-domain="ai.bornforthis.cn"
+    data-project="readygodule"
+  ></script>
+
+  <script>
+    // 等 counter.js 初始化完成
+    window.addEventListener("bftcounter:update", (e) => {
+      const data = e.detail;
+
+      if (data.project) {
+        document.getElementById("projectCount").textContent = data.total;
+      } else {
+        document.getElementById("domainCount").textContent = data.total;
+      }
+
+      document.getElementById("debug").textContent =
+        JSON.stringify(data, null, 2);
+    });
+
+    // 手动触发 hit（测试 API 是否正常）
+    document.getElementById("manualHit").onclick = () => {
+      if (window.BFTCounter) {
+        window.BFTCounter.hit();
+        window.BFTCounter.get().catch(console.error);
+      }
+    };
+  </script>
+
+</body>
+</html>
